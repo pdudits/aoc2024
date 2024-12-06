@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -123,16 +125,30 @@ public class guard {
         //var input = Map.fromLines(SAMPLE.lines());
         var input = Map.fromLines(Files.lines(Path.of("input.txt")));
         // step 1:
-        var start = input.findStart();
-        out.println(input.walkAway());
-        // 1742 too high
-        // 1591 as well
-        // 1546 neither
-        // nor 1402
-        // maybe 1485....? no.
+        var guardsPath = WalkedPath.walk(input);
+        out.println(guardsPath.visitedCells());
 
-        out.println(input.copy().singleObstacles(start));
+        out.println(loopingObstacles(input, guardsPath));
     }
+
+    static int loopingObstacles(Map input, WalkedPath path) {
+        var candidates = new HashSet<Position>();
+        // not the first step
+        for (var step : path.steps()) {
+            var cell = step.move().position();
+            if (!input.isValid(cell)) {
+                continue;
+            }
+            if (!candidates.contains(cell)) {
+                var walk = WalkedPath.walk(input.withObstacle(cell));
+                if (walk.result() == PathResult.LOOP) {
+                    candidates.add(cell);
+                }
+            }
+        }
+        return candidates.size();
+    }
+
 }
 
 record Position(int x, int y) {
@@ -165,151 +181,87 @@ enum Direction {
         };
     }
 
-    public Position inverse(Position nextPos) {
-        return nextPos.move(-dx, -dy);
+}
+
+record Step(Position position, Direction direction) {
+    public Step move() {
+        return new Step(direction.move(position), direction);
     }
 }
 
-record Map(int[][] map) {
-    public static Map fromLines(Stream<String> lines) {
-        return new Map(lines.map(l -> l.chars().map(c -> switch (c) {
-            case '^' -> 1;
-            case '#' -> -1;
-            default -> 0;
-        }).toArray()).toArray(int[][]::new));
+enum PathResult {
+    EXIT, LOOP;
+}
+
+record WalkedPath(PathResult result, List<Step> steps) {
+    static WalkedPath walk(Map map) {
+        var position = map.start();
+        var direction = Direction.UP;
+        var path = new LinkedHashSet<Step>();
+        while (true) {
+            var newPosition = direction.move(position);
+            // turn until we can move
+            for (int i=0; map.isValid(newPosition) && map.isObstacle(newPosition); i++) {
+                direction = direction.turnRight();
+                newPosition = direction.move(position);
+                if (i > 4) {
+                    throw new AssertionError("Stuck at " + position);
+                }
+            }
+            if (!map.isValid(newPosition)) {
+                path.add(new Step(position, direction));
+                return new WalkedPath(PathResult.EXIT, List.copyOf(path));
+            }
+            if (!path.add(new Step(position, direction))) {
+                return new WalkedPath(PathResult.LOOP, List.copyOf(path));
+            }
+            position = newPosition;
+        }
     }
 
-    Position findStart() {
-        for (int y = 0; y < map.length; y++) {
-            for (int x = 0; x < map[y].length; x++) {
-                if (map[y][x] == 1) {
-                    return new Position(x, y);
+    int visitedCells() {
+        return steps.stream().map(Step::position).collect(HashSet::new, Set::add, Set::addAll).size();
+    }
+}
+
+record Map(Position start, int[][] map) {
+    public static Map fromLines(Stream<String> lines) {
+        var grid = lines.map(l -> l.chars().map(c -> switch (c) {
+            case '^' -> 6;
+            case '#' -> -1;
+            default -> 0;
+        }).toArray()).toArray(int[][]::new);
+        Position start = null;
+        for (int y = 0; y < grid.length; y++) {
+            for (int x = 0; x < grid[y].length; x++) {
+                if (grid[y][x] == 6) {
+                    start = new Position(x, y);
+                    break;
                 }
             }
         }
-        throw new IllegalArgumentException("No start position found");
+        if (start == null) {
+            throw new AssertionError("No start found");
+        }
+        return new Map(start, grid);
+    }
+
+    boolean isValid(Position p) {
+        return p.y() >= 0 && p.y() < map.length && p.x() >= 0 && p.x() < map[p.y()].length;
     }
 
     boolean isObstacle(Position p) {
         return map[p.y()][p.x()] < 0;
     }
 
-    boolean isInside(Position p) {
-        return p.y() >= 0 && p.y() < map.length && p.x() >= 0 && p.x() < map[p.y()].length;
+    private Map copy() {
+        return new Map(start, Arrays.stream(map).map(int[]::clone).toArray(int[][]::new));
     }
 
-    void mark(Position p, Direction d) {
-        map[p.y()][p.x()] = d.ordinal() + 1;
-    }
-
-    int countVisited() {
-        return (int) Stream.of(map).flatMapToInt(Arrays::stream).filter(i -> i > 0).count();
-    }
-
-    int singleObstacles(Position start) {
-        class LoopVerifier implements Marker {
-            Set<Position> matches = new HashSet<>();
-
-            @Override
-            public void mark(Position nextPos, Direction d) {
-                var p = d.inverse(nextPos);
-                if (matches.contains(nextPos) /* || visited(nextPos) */) {
-                    return;
-                }
-                var mapWithObstacle = copy();
-                mapWithObstacle.map[nextPos.y()][nextPos.x()] = -2;
-                mapWithObstacle.mark(p, d);
-                mapWithObstacle.walk(p, d, (pos, dir) -> {
-                    if (!isInside(pos)) {
-                        return true;
-                    }
-                    if (mapWithObstacle.visited(pos, d)) {
-                        out.println(pos);
-                        mapWithObstacle.map[pos.y()][pos.x()] = 5;
-                        //mapWithObstacle.print();
-                        try {
-                            mapWithObstacle.copy().revalidateLoop(start, Direction.UP);
-                            matches.add(pos);
-                            return true;
-                        } catch (IllegalArgumentException e) {
-                            System.err.println("Bad loop involving"+nextPos);
-                            return true;
-                        }
-                    }
-                    return false;
-                }, mapWithObstacle::mark);
-            }
-        }
-        var verifier = new LoopVerifier();
-        verifier.matches.add(start);
-        mark(start, Direction.UP);
-        walk(start, Direction.UP, (p, d) -> !isInside(p), verifier);
-        return verifier.matches.size();
-    }
-
-    void revalidateLoop(Position start, Direction d) {
-        walk(start, d, (pos, dir) -> {
-            if (!isInside(pos)) {
-                throw new IllegalArgumentException("Not a loop");
-            }
-            if (visited(pos, dir)) {
-                return true;
-            }
-            return false;
-        }, this::mark);
-    }
-
-    boolean visited(Position p, Direction d) {
-        return map[p.y()][p.x()] == d.ordinal() + 1;
-    }
-
-    boolean visited(Position p) {
-        return map[p.y()][p.x()] > 0;
-    }
-
-    Map copy() {
-        return new Map(Arrays.stream(map).map(a -> Arrays.stream(a).map(c -> c < 0 ? c : 0).toArray()).toArray(int[][]::new));
-    }
-
-    int walkAway() {
-        walk(findStart(), Direction.UP, (p, d) -> !isInside(p), null);
-        print();
-        return countVisited();
-    }
-
-    void walk(Position start, Direction d, TerminalCondition condition, Marker marker) {
-        var p = start;
-        while (true) {
-            boolean finished = false;
-            for (int i = 0; i < 4; i++) {
-                Position nextPos = d.move(p);
-                if (condition.shouldStop(nextPos, d)) {
-                    return;
-                }
-                if (!isObstacle(nextPos)) {
-                    if (marker != null) {
-                        marker.mark(nextPos, d);
-                    }
-                    mark(nextPos, d);
-                    p = nextPos;
-                    finished = true;
-                    break;
-                }
-                d = d.turnRight();
-            }
-            if (!finished) {
-                print();
-                throw new AssertionError("Blocked at " + p);
-            }
-        }
-    }
-
-    interface TerminalCondition {
-        boolean shouldStop(Position p, Direction d);
-    }
-
-    interface Marker {
-        void mark(Position p, Direction d);
+    Map withObstacle(Position p) {
+        var copy = copy();
+        copy.map[p.y()][p.x()] = -2;
+        return copy;
     }
 
     void print() {
@@ -324,6 +276,7 @@ record Map(int[][] map) {
                     case 3 -> 'v';
                     case 4 -> '<';
                     case 5 -> 'L';
+                    case 6 -> 'S';
                     default -> throw new AssertionError("Unknown cell: " + cell);
                 });
             }
