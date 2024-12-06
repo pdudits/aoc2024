@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static java.lang.System.out;
@@ -120,10 +122,16 @@ public class guard {
     public static void main(String... args) throws IOException {
         //var input = Map.fromLines(SAMPLE.lines());
         var input = Map.fromLines(Files.lines(Path.of("input.txt")));
+        // step 1:
         var start = input.findStart();
         out.println(input.walkAway());
-        // 1747 is too high
-        out.println(input.singleObstacleLoops(start, Direction.UP));
+        // 1742 too high
+        // 1591 as well
+        // 1546 neither
+        // nor 1402
+        // maybe 1485....? no.
+
+        out.println(input.copy().singleObstacles(start));
     }
 }
 
@@ -156,6 +164,10 @@ enum Direction {
             case LEFT -> UP;
         };
     }
+
+    public Position inverse(Position nextPos) {
+        return nextPos.move(-dx, -dy);
+    }
 }
 
 record Map(int[][] map) {
@@ -178,84 +190,105 @@ record Map(int[][] map) {
         throw new IllegalArgumentException("No start position found");
     }
 
-    /**
-     * just copy obstacles not directions
-     * @return
-     */
-    Map copy() {
-        return new Map(Arrays.stream(map)
-                .map(a -> Arrays.stream(a).map(x -> x < 0 ? x : 0).toArray())
-                .toArray(int[][]::new));
+    boolean isObstacle(Position p) {
+        return map[p.y()][p.x()] < 0;
     }
 
-    boolean wasHeading(Position p, Direction d) {
-        return (map[p.y()][p.x()] & (1 << d.ordinal())) != 0;
+    boolean isInside(Position p) {
+        return p.y() >= 0 && p.y() < map.length && p.x() >= 0 && p.x() < map[p.y()].length;
     }
 
-    boolean tryObstacle(Position start, Position p, Direction d) {
-        var copy = copy();
-        copy.mark(p, d);
-        Position nextPos = d.move(p);
-        if (nextPos.equals(start)) {
-            return false;
-        }
-        if (!isInside(nextPos)) {
-            return false;
-        }
-        if (isObstacle(nextPos)) {
-                // cannot place new obstacle there
-                return false;
-        } else {
-             copy.map[nextPos.y()][nextPos.x()] = -2;
-             var result = copy.walksIntoLoop(p, d.turnRight());
-             if (result) {
-                 //out.println();
-                 //copy.print();
-                 return true;
-             } else {
-                 return false;
-             }
-        }
+    void mark(Position p, Direction d) {
+        map[p.y()][p.x()] = d.ordinal() + 1;
     }
 
-    int singleObstacleLoops(Position start, Direction d) {
-        Position p = start;
-        int loops = 0;
-        while (true) {
-            if (tryObstacle(start, p, d)) {
-                loops++;
-            }
-            boolean finished = false;
-            for (int i = 0; i < 4; i++) {
-                Position nextPos = d.move(p);
-                if (!isInside(nextPos)) {
-                    return loops;
+    int countVisited() {
+        return (int) Stream.of(map).flatMapToInt(Arrays::stream).filter(i -> i > 0).count();
+    }
+
+    int singleObstacles(Position start) {
+        class LoopVerifier implements Marker {
+            Set<Position> matches = new HashSet<>();
+
+            @Override
+            public void mark(Position nextPos, Direction d) {
+                var p = d.inverse(nextPos);
+                if (matches.contains(nextPos) /* || visited(nextPos) */) {
+                    return;
                 }
-                if (!isObstacle(nextPos)) {
-                    p = nextPos;
-                    finished = true;
-                    break;
-                }
-                d = d.turnRight();
-            }
-            if (!finished) {
-                print();
-                throw new AssertionError("Blocked at " + p);
-            }
-        }
-    }
-
-    boolean walksIntoLoop(Position p, Direction d) {
-        while (true) {
-            boolean finished = false;
-            for (int i = 0; i < 4; i++) {
-                Position nextPos = d.move(p);
-                if (!isInside(nextPos)) {
-                    return false;
-                }
-                if (!isObstacle(nextPos)) {
-                    if (wasHeading(nextPos, d)) {
+                var mapWithObstacle = copy();
+                mapWithObstacle.map[nextPos.y()][nextPos.x()] = -2;
+                mapWithObstacle.mark(p, d);
+                mapWithObstacle.walk(p, d, (pos, dir) -> {
+                    if (!isInside(pos)) {
                         return true;
+                    }
+                    if (mapWithObstacle.visited(pos, d)) {
+                        out.println(pos);
+                        mapWithObstacle.map[pos.y()][pos.x()] = 5;
+                        //mapWithObstacle.print();
+                        try {
+                            mapWithObstacle.copy().revalidateLoop(start, Direction.UP);
+                            matches.add(pos);
+                            return true;
+                        } catch (IllegalArgumentException e) {
+                            System.err.println("Bad loop involving"+nextPos);
+                            return true;
+                        }
+                    }
+                    return false;
+                }, mapWithObstacle::mark);
+            }
+        }
+        var verifier = new LoopVerifier();
+        verifier.matches.add(start);
+        mark(start, Direction.UP);
+        walk(start, Direction.UP, (p, d) -> !isInside(p), verifier);
+        return verifier.matches.size();
+    }
+
+    void revalidateLoop(Position start, Direction d) {
+        walk(start, d, (pos, dir) -> {
+            if (!isInside(pos)) {
+                throw new IllegalArgumentException("Not a loop");
+            }
+            if (visited(pos, dir)) {
+                return true;
+            }
+            return false;
+        }, this::mark);
+    }
+
+    boolean visited(Position p, Direction d) {
+        return map[p.y()][p.x()] == d.ordinal() + 1;
+    }
+
+    boolean visited(Position p) {
+        return map[p.y()][p.x()] > 0;
+    }
+
+    Map copy() {
+        return new Map(Arrays.stream(map).map(a -> Arrays.stream(a).map(c -> c < 0 ? c : 0).toArray()).toArray(int[][]::new));
+    }
+
+    int walkAway() {
+        walk(findStart(), Direction.UP, (p, d) -> !isInside(p), null);
+        print();
+        return countVisited();
+    }
+
+    void walk(Position start, Direction d, TerminalCondition condition, Marker marker) {
+        var p = start;
+        while (true) {
+            boolean finished = false;
+            for (int i = 0; i < 4; i++) {
+                Position nextPos = d.move(p);
+                if (condition.shouldStop(nextPos, d)) {
+                    return;
+                }
+                if (!isObstacle(nextPos)) {
+                    if (marker != null) {
+                        marker.mark(nextPos, d);
                     }
                     mark(nextPos, d);
                     p = nextPos;
@@ -271,74 +304,28 @@ record Map(int[][] map) {
         }
     }
 
-    boolean isObstacle(Position p) {
-        return map[p.y()][p.x()] == -1;
+    interface TerminalCondition {
+        boolean shouldStop(Position p, Direction d);
     }
 
-    boolean isInside(Position p) {
-        return p.y() >= 0 && p.y() < map.length && p.x() >= 0 && p.x() < map[p.y()].length;
-    }
-
-    void mark(Position p, Direction d) {
-        map[p.y()][p.x()] |= 1 << d.ordinal();
-    }
-
-    int countVisited() {
-        return (int) Stream.of(map).flatMapToInt(Arrays::stream).filter(i -> i > 0).count();
-    }
-
-    int walkAway() {
-        Position p = findStart();
-        Direction d = Direction.UP;
-        while (true) {
-            boolean finished = false;
-            for (int i = 0; i < 4; i++) {
-                Position nextPos = d.move(p);
-                if (!isInside(nextPos)) {
-                    print();
-                    return countVisited();
-                }
-                if (!isObstacle(nextPos)) {
-                    mark(nextPos, d);
-                    p = nextPos;
-                    finished = true;
-                    break;
-                }
-                d = d.turnRight();
-            }
-            if (!finished) {
-                print();
-                throw new AssertionError("Blocked at " + p);
-            }
-        }
+    interface Marker {
+        void mark(Position p, Direction d);
     }
 
     void print() {
         for (int[] row : map) {
             for (int cell : row) {
-                out.print(
-                        switch (cell) {
-                            // I spent too much time here
-                            case -2 -> 'O';
-                            case -1 -> '#';
-                            case 0 -> '.';
-                            case 1 -> '↑';
-                            case 2 -> '→';
-                            case 3 -> '↗';
-                            case 4 -> '↓';
-                            case 5 -> '↕';
-                            case 6 -> '↘';
-                            case 7 -> '⇲';
-                            case 8 -> '←';
-                            case 9 -> '↖';
-                            case 10 -> '↔';
-                            case 11 -> '⟰';
-                            case 12 -> '↙';
-                            case 13 -> '⇚';
-                            case 14 -> '⟱';
-                            case 15 -> '⟴';
-                            default -> throw new AssertionError("Unknown cell: " + cell);
-                        });
+                out.print(switch (cell) {
+                    case -2 -> 'O';
+                    case -1 -> '#';
+                    case 0 -> '.';
+                    case 1 -> '^';
+                    case 2 -> '>';
+                    case 3 -> 'v';
+                    case 4 -> '<';
+                    case 5 -> 'L';
+                    default -> throw new AssertionError("Unknown cell: " + cell);
+                });
             }
             out.println();
         }
