@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static java.lang.Math.multiplyExact;
 import static java.lang.System.*;
 
 /**
@@ -65,42 +66,43 @@ public class day13 {
 
     public static void main(String... args) throws IOException {
         var problems = Problem.parse(Files.readAllLines(Path.of("input.txt")));
-        out.println(problems.stream().mapToInt(Problem::minTokens).sum());
+        out.println(problems.stream().mapToLong(Problem::minTokens).sum());
+        out.println(problems.stream().flatMap(p -> p.solveHarder().stream().findFirst().stream()).mapToLong(Problem::cost).sum());
     }
 }
 
-record Vector(int x, int y) {}
-record ExtendedGcd(int gcd, int s, int t) {
+record Vector(long x, long y) {}
+record ExtendedGcd(long gcd, long s, long t) {
     /**
      * https://en.wikipedia.org/wiki/Extended_Euclidean_algorithm
      * @param a
      * @param b
      * @return
      */
-    static ExtendedGcd of(int a, int b) {
-        int old_r = a, r = b, old_s = 1, s = 0, old_t = 0, t = 1;
+    static ExtendedGcd of(long a, long b) {
+        long old_r = a, r = b, old_s = 1, s = 0, old_t = 0, t = 1;
         while (r != 0) {
-            int q = old_r / r;
-            int tr = r;
+            long q = old_r / r;
+            long tr = r;
             r = old_r - q * r;
             old_r = tr;
 
-            int ts = s;
+            long ts = s;
             s = old_s - q * s;
             old_s = ts;
 
-            int tt = t;
+            long tt = t;
             t = old_t - q * t;
             old_t = tt;
         }
         return new ExtendedGcd(old_r, old_s, old_t);
     }
 }
-record DiofantineSolution(int x, int y, int dx, int dy) {
+record DiofantineSolution(long x, long y, long dx, long dy) {
     List<DiofantineSolution> around100() {
         // find solutions with roots between 0 and 100
         List<DiofantineSolution> solutions = new ArrayList<>();
-        for (int k = -x/dx, x1=0; Math.abs(x1) < 120; k+=Math.signum(dx)) {
+        for (long k = -x/dx, x1=0; Math.abs(x1) < 120; k+=Math.signum(dx)) {
             x1 = x + k * dx;
             var y1 = y + k * dy;
             if (x1 >= 0 && y1 >= 0 && x1 <= 100 && y1 <= 100) {
@@ -112,12 +114,12 @@ record DiofantineSolution(int x, int y, int dx, int dy) {
 }
 
 final class Diofantine {
-    private final int a;
-    private final int b;
-    private final int c;
+    private final long a;
+    private final long b;
+    private final long c;
     private final ExtendedGcd gcd;
 
-    Diofantine(int a, int b, int c) {
+    Diofantine(long a, long b, long c) {
         this.a = a;
         this.b = b;
         this.c = c;
@@ -128,15 +130,15 @@ final class Diofantine {
         return c % gcd.gcd() == 0;
     }
 
-    public int a() {
+    public long a() {
         return a;
     }
 
-    public int b() {
+    public long b() {
         return b;
     }
 
-    public int c() {
+    public long c() {
         return c;
     }
 
@@ -144,11 +146,11 @@ final class Diofantine {
         if (!hasSolution()) {
             return Optional.empty();
         }
-        int x = gcd.s() * (c / gcd.gcd());
-        int y = gcd.t() * (c / gcd.gcd());
+        long x = multiplyExact(gcd.s(), (c / gcd.gcd()));
+        long y = multiplyExact(gcd.t(), (c / gcd.gcd()));
 
-        int step_x = -b / gcd.gcd();
-        int step_y = a / gcd.gcd();
+        long step_x = -b / gcd.gcd();
+        long step_y = a / gcd.gcd();
 
         return Optional.of(new DiofantineSolution(x, y, step_x, step_y));
     }
@@ -201,20 +203,112 @@ record Problem(Vector a, Vector b, Vector prize) {
                         .filter(y2 -> x2.x() == y2.x() && x2.y() == y2.y())
                 )
                 .map(x2 -> new Vector(x2.x(), x2.y()))
-                .sorted(Comparator.comparingInt(Problem::cost))
+                .sorted(Comparator.comparingLong(Problem::cost))
                 .toList();
     }
 
-    int minTokens() {
+    /**
+     * 
+     * s you go to win the first prize, you discover that the claw is nowhere near where you expected it would be. Due to a unit conversion error in your measurements, the position of every prize is actually 10000000000000 higher on both the X and Y axis!
+     *
+     * Add 10000000000000 to the X and Y position of every prize. After making this change, the example above would now look like this:
+     *
+     * Button A: X+94, Y+34
+     * Button B: X+22, Y+67
+     * Prize: X=10000000008400, Y=10000000005400
+     *
+     * Button A: X+26, Y+66
+     * Button B: X+67, Y+21
+     * Prize: X=10000000012748, Y=10000000012176
+     *
+     * Button A: X+17, Y+86
+     * Button B: X+84, Y+37
+     * Prize: X=10000000007870, Y=10000000006450
+     *
+     * Button A: X+69, Y+23
+     * Button B: X+27, Y+71
+     * Prize: X=10000000018641, Y=10000000010279
+     *
+     * Now, it is only possible to win a prize on the second and fourth claw machines. Unfortunately, it will take many more than 100 presses to do so.
+     *
+     * Using the corrected prize coordinates, figure out how to win as many prizes as possible. What is the fewest tokens you would have to spend to win all possible prizes?
+     * 35189540698579 too low, because I haven't solved colinear case yet
+     * 145928630567610 too high
+     * @return
+     */
+    List<Vector> solveHarder() {
+        var x = harderX().solve();
+        var y = harderY().solve();
+        if (x.isEmpty() || y.isEmpty()) {
+            return List.of();
+        }
+        var s1 = x.get();
+        var s2 = y.get();
+
+        // Find k1 and k2 such that s1.x + k1 * s1.dx = s2.x + k2 * s2.dx
+        // and s1.y + k1 * s1.dy = s2.y + k2 * s2.dy
+        long dx1 = s1.dx();
+        long dx2 = s2.dx();
+        long dy1 = s1.dy();
+        long dy2 = s2.dy();
+        long x1 = s1.x();
+        long x2 = s2.x();
+        long y1 = s1.y();
+        long y2 = s2.y();
+
+        // Solve for k1 and k2
+        long a = dx1;
+        long b = -dx2;
+        long c = x2 - x1;
+        long d = dy1;
+        long e = -dy2;
+        long f = y2 - y1;
+
+        // Use Cramer's rule to solve the system of linear equations
+        long det = a * e - b * d;
+        if (det == 0) {
+            return List.of(); // No solution or infinite solutions (collinear)
+        }
+
+        long k1_num = c * e - b * f;
+        long k2_num = a * f - c * d;
+
+        if (k1_num % det != 0 || k2_num % det != 0) {
+            return List.of(); // No integer solution
+        }
+
+        long k1 = k1_num / det;
+        long k2 = k2_num / det;
+
+        // Calculate the intersection point
+        long xIntersection = x1 + k1 * dx1;
+        long yIntersection = y1 + k1 * dy1;
+        long xIntersection2 = x2 + k2 * dx2;
+        long yIntersection2 = y2 + k2 * dy2;
+
+        if (xIntersection != xIntersection2 || yIntersection != yIntersection2) {
+            throw new IllegalArgumentException("Invalid solution");
+        }
+
+        // Check if the solutions are positive integers
+        if (xIntersection < 0 || yIntersection < 0) {
+            return List.of();
+        }
+
+        // Return the solution with minimal cost
+        return List.of(new Vector(xIntersection, yIntersection));
+    }
+
+    long minTokens() {
         var result = solve().stream()
-                .mapToInt(Problem::cost)
+                .mapToLong(Problem::cost)
                 .findFirst()
                 .orElse(0);
         out.println(this + " : " + result);
         return result;
     }
 
-    static int cost(Vector solution) {
+    static long cost(Vector solution) {
         return 3 * solution.x() + solution.y();
     }
 
@@ -249,7 +343,18 @@ record Problem(Vector a, Vector b, Vector prize) {
         return new Diofantine(a.x(), b.x(), prize.x());
     }
 
+    Vector harderPrize() {
+        return new Vector(prize.x() + 10000000000000L, prize.y() + 10000000000000L);
+    }
+
+    Diofantine harderX() {
+        return new Diofantine(a.x(), b.x(), harderPrize().x());
+    }
+
     public Diofantine y() {
         return new Diofantine(a.y(), b.y(), prize.y());
+    }
+    Diofantine harderY() {
+        return new Diofantine(a.y(), b.y(), harderPrize().y());
     }
 }
