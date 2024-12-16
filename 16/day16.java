@@ -6,12 +6,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.TreeSet;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static java.lang.System.out;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * The Reindeer start on the Start Tile (marked S) facing East and need to reach the End Tile (marked E). They can move forward one tile at a time (increasing their score by 1 point), but never into a wall (#). They can also rotate clockwise or counterclockwise 90 degrees at a time (increasing their score by 1000 points).
@@ -137,7 +143,13 @@ public class day16 {
 
     public static void main(String... args) throws IOException {
         var maze = Maze.parse(Files.lines(Path.of("input.txt")));
+        //var maze = Maze.parse(SAMPLE1.lines());
         out.println(maze.findShortestPath());
+        var bestPaths = maze.findAllBestPaths();
+        var bestCells = bestPaths.stream().flatMap(h -> h.path().stream().map(p -> p.p())).collect(Collectors.toSet());
+        // 523 too low
+
+        out.println(bestCells.size());
     }
 }
 
@@ -219,26 +231,26 @@ record Maze(char[][] map, Position start, Position end) {
         return new Maze(map, start, end);
     }
 
-    int findShortestPath() {
-        record Head(Position p, int score, int distance, List<Position> path) {
-            int sortKey() {
-                return score + distance;
-            }
-
-            Head create(Direction dir, int addScore, Position end) {
-                Position newPosition = dir == p.direction() ? p.moveForward() : new Position(p.p(), dir);
-                var newPath = new ArrayList<Position>(path.size()+1);
-                newPath.addAll(path);
-                newPath.add(newPosition);
-                return new Head(newPosition, score + addScore, newPosition.distance(end), newPath);
-            }
-
-            static Head create(Position p, int score, Position end) {
-                return new Head(p, score, p.distance(end), List.of());
-            }
+    record Head(Position p, int score, int distance, List<Position> path) {
+        int sortKey() {
+            return score + distance;
         }
 
+        Head create(Direction dir, int addScore, Position end) {
+            Position newPosition = dir == p.direction() ? p.moveForward() : new Position(p.p(), dir);
+            var newPath = new ArrayList<Position>(path.size()+1);
+            newPath.addAll(path);
+            newPath.add(newPosition);
+            return new Head(newPosition, score + addScore, newPosition.distance(end), newPath);
+        }
 
+        static Head create(Position p, int score, Position end) {
+            return new Head(p, score, p.distance(end), List.of());
+        }
+    }
+
+
+    int findShortestPath() {
         TreeSet<Head> heads = new TreeSet<>(Comparator.comparingInt(Head::sortKey)
                 .thenComparingInt(x -> x.p().p().x())
                 .thenComparingInt(x -> x.p().p().y())
@@ -265,6 +277,60 @@ record Maze(char[][] map, Position start, Position end) {
             }
         }
         throw new IllegalStateException("No path found");
+    }
+
+    record Cell(int score, List<Position> path) {
+    }
+
+    List<Head> findAllBestPaths() {
+        // we'll do breath-first search noting the score and the paths to each position
+        var heads = new PriorityQueue<Head>(Comparator.comparingInt(Head::score)
+                .thenComparingInt(x -> x.p().p().x())
+                .thenComparingInt(x -> x.p().p().y())
+                .thenComparing(x -> x.p().direction()));
+        heads.add(new Head(start, 0, start.distance(end), List.of(start)));
+        Map<Position, Cell> bestScores = new HashMap<>();
+        Integer bestSolution = null;
+        List<Head> solutions = new ArrayList<>();
+        Head h;
+        var executor = Executors.newSingleThreadScheduledExecutor();
+        executor.scheduleAtFixedRate(() -> {
+            out.println("Heads: " + heads.size());
+        }, 1, 1, SECONDS);
+        while((h = heads.poll()) != null) {
+            if (isEnd(h.p)) {
+                if (bestSolution == null || h.score < bestSolution) {
+                    bestSolution = h.score;
+                    solutions.clear();
+                }
+                if (bestSolution != null && h.score == bestSolution) {
+                    out.println("Found solution with score " + bestSolution + " and path " + h.path);
+                    solutions.add(h);
+                }
+            }
+
+            for (var newPosition : List.of(h.p.moveForward(), h.p.turnRight(), h.p.turnLeft())) {
+                if (!isValidPosition(newPosition)) {
+                    continue;
+                }
+                int newScore = h.score + (newPosition.direction() == h.p.direction() ? 1 : 1000);
+                if (bestSolution != null && newScore >= bestSolution) {
+                    continue;
+                }
+                Cell cell = bestScores.get(newPosition);
+                if (cell != null && cell.score < newScore) {
+                    continue;
+                }
+                var fh = h;
+                bestScores.compute(h.p, (k, c) -> c == null || c.score > fh.score ? new Cell(fh.score, fh.path) : c);
+                var path = new ArrayList<Position>(h.path.size()+1);
+                path.addAll(h.path);
+                path.add(newPosition);
+                heads.add(new Head(newPosition, newScore, newPosition.distance(end), path));
+            }
+        }
+        executor.shutdownNow();
+        return solutions;
     }
 
     private boolean isValidPosition(Position forward) {
