@@ -4,8 +4,8 @@ import java.util.Arrays;
 
 public class day172 {
     // futhrest I got was 64025057, around halfway. But I should have done the recursive search I intended before
-
-    static int[] translation = new int[1024];
+    final static int LOOKAHEAD = 10;
+    static int[] translation = new int[2<<LOOKAHEAD];
     final static int[] program = 
                             {2,4,1,1,7,5,0,3,1,4,4,4,5,5,3,0};
 
@@ -37,7 +37,7 @@ public class day172 {
     static long search(int lookahead, int index, long a) {
         var b = lookahead / 8;
         for (int i=0; i<8; i++) {
-            var nextLookahead = (i << 7) | b;
+            var nextLookahead = (i << LOOKAHEAD-3) | b;
             if (translation[nextLookahead] == program[index]) {
                 long result = (long)nextLookahead % 8 << 3*index | a;
                 if (index == program.length-1) {
